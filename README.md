@@ -167,3 +167,7 @@ tout. Aucune requête réseau, aucune télémétrie, aucun fichier écrit. Les
 
 MIT © 2026 [Stranix](https://apps.stranix.net) — Gilles Fauvie.
 Fabriqué en Belgique, une invocation de `swiftc` à la fois.
+
+## Support
+
+OmSaver is open source. If it lives on your Mac, you can [sponsor on GitHub](https://github.com/sponsors/stranix79) or [buy me a Red Bull](https://ko-fi.com/stranix). Other ways: [stranix.net/soutenir](https://stranix.net/soutenir/).
