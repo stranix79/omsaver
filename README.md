@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Un économiseur d'écran TUI pour macOS. Ambiance Omarchy, vraies stats système, zéro dépendance.</b><br>
-  <sub>Membre de l'<a href="https://omfi.stranix.net">OmSuite</a> — de petits outils natifs qui donnent à votre Mac des airs de tiling-WM.</sub>
+  <sub>Membre de l'<a href="https://om.stranix.net">OmSuite</a> — de petits outils natifs qui donnent à votre Mac des airs de tiling-WM.</sub>
 </p>
 
 <p align="center">
@@ -162,6 +162,14 @@ Safari). Tout est sur [apps.stranix.net](https://apps.stranix.net).
 OmSaver lit vos statistiques CPU/mémoire localement et les affiche. C'est
 tout. Aucune requête réseau, aucune télémétrie, aucun fichier écrit. Les
 « scans réseau » du journal sont de la pure fiction théâtrale.
+
+## Du même auteur
+
+- [stranix.net](https://stranix.net) : le blog.
+- [Deckhand](https://deckhand.show) : des présentations HTML écrites en Markdown.
+- [Chutag](https://chutag.stranix.net) : des tags QR pour retrouver ses objets perdus (bêta).
+- [apps.stranix.net](https://apps.stranix.net) : toutes les apps macOS, OmSuite comprise.
+- [CODE79](https://code79.com) : l'atelier devops derrière tout ça.
 
 ## Licence
 
