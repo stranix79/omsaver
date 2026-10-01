@@ -5,8 +5,8 @@
 <h1 align="center">om› saver</h1>
 
 <p align="center">
-  <b>Un économiseur d'écran TUI pour macOS. Ambiance Omarchy, vraies stats système, zéro dépendance.</b><br>
-  <sub>Membre de l'<a href="https://om.stranix.net">OmSuite</a> — de petits outils natifs qui donnent à votre Mac des airs de tiling-WM.</sub>
+  <b>A TUI screensaver for macOS. Omarchy vibes, real system stats, zero dependencies.</b><br>
+  <sub>Part of the <a href="https://om.stranix.net">OmSuite</a>: small native tools that give your Mac a tiling-WM feel.</sub>
 </p>
 
 <p align="center">
@@ -18,163 +18,162 @@
 
 ---
 
-## Ce que c'est
+## What it is
 
-OmSaver transforme un Mac inactif en tableau de bord de terminal vivant : une
-horloge géante monospace, de la vraie télémétrie (barres CPU par cœur, jauge
-mémoire, sparkline de charge, échantillonnées en direct depuis le noyau) et un
-journal défilant d'opérations savamment fictives (`HERDING PACKETS`,
-`DEFRAGMENTING THE AETHER`…), le tout dans l'esthétique
-[Omarchy](https://omarchy.org) — panes sombres, fines bordures bleues, gaps
-façon Hyprland. Un seul fichier Swift, AppKit uniquement, aucun réseau, ~200 Ko.
+OmSaver turns an idle Mac into a living terminal dashboard: a huge monospace
+clock, real telemetry (per-core CPU bars, a memory gauge, a load sparkline,
+all sampled live from the kernel) and a scrolling log of carefully fictional
+operations (`HERDING PACKETS`, `DEFRAGMENTING THE AETHER`...), in the
+[Omarchy](https://omarchy.org) look: dark panes, thin blue borders,
+Hyprland-style gaps. One Swift file, AppKit only, no network, about 200 KB.
 
-## Structure du repo
+## Repository layout
 
 ```
 omsaver/
-├── README.md                  ← vous êtes ici
-├── LICENSE                    ← MIT
-├── build.sh                   ← TOUT le build : compile, assemble le bundle
-│                                .saver, signe, installe. Pas de projet Xcode.
+├── README.md                  <- you are here
+├── LICENSE                    <- MIT
+├── build.sh                   <- THE whole build: compiles, assembles the
+│                                 .saver bundle, signs, installs. No Xcode project.
 ├── Sources/
-│   └── OmSaverView.swift      ← TOUT le code : une classe, OmSaverView,
-│                                abondamment commentée — c'est le fichier à
-│                                lire pour comprendre le projet.
+│   └── OmSaverView.swift      <- THE whole code: one class, OmSaverView,
+│                                 heavily commented. Read this file to
+│                                 understand the project.
 ├── assets/
-│   └── omsaver.png            ← la capture d'écran ci-dessus
-└── build/                     ← produit par build.sh (ignoré par git)
-    └── OmSaver.saver/         ← le bundle final, prêt à installer
+│   └── omsaver.png            <- the screenshot above
+└── build/                     <- produced by build.sh (ignored by git)
+    └── OmSaver.saver/         <- the final bundle, ready to install
 ```
 
-## Builder et installer
+## Build and install
 
-Prérequis : les Command Line Tools d'Apple (`xcode-select --install`), rien
-d'autre. Ensuite :
+Requirement: Apple's Command Line Tools (`xcode-select --install`), nothing
+else. Then:
 
 ```console
 $ git clone https://github.com/stranix79/omsaver.git
 $ cd omsaver
 $ ./build.sh install
-✓ installé — Réglages Système → Économiseur d'écran → OmSaver
+✓ installed. System Settings > Screen Saver > OmSaver
 ```
 
-`./build.sh` seul construit `build/OmSaver.saver` sans l'installer.
-Sinon, sans compiler : téléchargez `OmSaver.saver.zip` dans les
-[Releases](https://github.com/stranix79/omsaver/releases), dézippez,
-double-cliquez `OmSaver.saver` — macOS propose de l'installer.
+`./build.sh` alone builds `build/OmSaver.saver` without installing it.
+No compiler at hand? Download `OmSaver.saver.zip` from the
+[Releases](https://github.com/stranix79/omsaver/releases), unzip it,
+double-click `OmSaver.saver` and macOS offers to install it.
 
-## Comment ça marche sous macOS
+## How it works on macOS
 
-Si vous venez du C, de Python ou de VB.NET, voici les mécanismes propres à la
-plateforme qu'illustre ce projet. Les fichiers sources détaillent chacun de
-ces points en commentaires — ceci est la vue d'ensemble.
+If you come from C, Python or VB.NET, here are the platform mechanisms this
+project illustrates. The source files explain each point in their comments;
+this is the overview.
 
-### Un .saver n'est pas un programme, c'est un plugin
+### A .saver is not a program, it is a plugin
 
-Il n'y a pas de `main()` dans ce projet, et ce n'est pas un oubli. Un
-économiseur d'écran macOS est un **bundle** `.saver` : un simple dossier avec
-une structure convenue (`Contents/MacOS/` pour le binaire, `Contents/Info.plist`
-pour les métadonnées) que le Finder affiche comme un fichier unique. Le binaire
-qu'il contient est un Mach-O de type *bundle* (`MH_BUNDLE`) — l'équivalent
-d'une `.dll`/`.so` chargeable dynamiquement, pas un exécutable.
+There is no `main()` in this project, and that is not an oversight. A macOS
+screensaver is a `.saver` **bundle**: a plain folder with an agreed structure
+(`Contents/MacOS/` for the binary, `Contents/Info.plist` for the metadata)
+that the Finder shows as a single file. The binary inside is a Mach-O of type
+*bundle* (`MH_BUNDLE`), the equivalent of a dynamically loadable `.dll`/`.so`,
+not an executable.
 
-Quand l'écran se met en veille, un processus système, **`legacyScreenSaver`**,
-charge ce bundle (via `dlopen`), lit dans l'`Info.plist` la clé
-`NSPrincipalClass` — ici `OmSaverView` ([build.sh:69](build.sh)) — instancie
-cette classe et lui confie une fenêtre plein écran. C'est pour ça que la classe
-porte l'attribut `@objc(OmSaverView)`
-([Sources/OmSaverView.swift:40](Sources/OmSaverView.swift)) : il fige son nom
-côté runtime Objective-C pour que la chaîne du plist retrouve la classe Swift.
+When the screen goes to sleep, a system process, **`legacyScreenSaver`**,
+loads this bundle (through `dlopen`), reads the `NSPrincipalClass` key in the
+`Info.plist`, here `OmSaverView` ([build.sh:69](build.sh)), instantiates that
+class and hands it a full-screen window. This is why the class carries the
+`@objc(OmSaverView)` attribute
+([Sources/OmSaverView.swift:40](Sources/OmSaverView.swift)): it pins the name
+on the Objective-C runtime side so the string in the plist can find the Swift
+class.
 
-Conséquence pratique : votre code ne « tourne » jamais tout seul. Le système
-appelle vos méthodes ; vous ne contrôlez ni le démarrage, ni la boucle
-d'événements. C'est de l'**inversion de contrôle**, comme un contrôle
-personnalisé en VB.NET dont le framework appelle `OnPaint`.
+Practical consequence: your code never "runs" on its own. The system calls
+your methods; you control neither the startup nor the event loop. This is
+**inversion of control**, like a custom control in VB.NET whose framework
+calls `OnPaint`.
 
-### Le cycle de vie : ScreenSaverView
+### The life cycle: ScreenSaverView
 
-`OmSaverView` hérite de `ScreenSaverView` (framework `ScreenSaver`), qui impose
-trois moments ([Sources/OmSaverView.swift:41](Sources/OmSaverView.swift)) :
+`OmSaverView` inherits from `ScreenSaverView` (the `ScreenSaver` framework),
+which imposes three moments
+([Sources/OmSaverView.swift:41](Sources/OmSaverView.swift)):
 
-1. **`init(frame:isPreview:)`** — construction. `isPreview` vaut `true` quand
-   la vue est la petite vignette des Réglages Système : même code, écran
-   minuscule (d'où le facteur `scale` calculé dans `draw`).
-2. **`animateOneFrame()`** — appelé par un timer système au rythme choisi via
-   `animationTimeInterval` (ici 8 fois par seconde). C'est la « boucle de
-   jeu » : on y met à jour l'*état* (échantillonner le CPU, ajouter une ligne
-   au journal) puis on demande un réaffichage avec `needsDisplay = true`.
-3. **`draw(_:)`** — appelé par AppKit quand la vue doit se repeindre. On y
-   *dessine* l'état, et rien d'autre : la séparation état/rendu est la règle
-   du framework, car `draw` peut être invoqué à tout moment.
+1. **`init(frame:isPreview:)`**: construction. `isPreview` is `true` when the
+   view is the small thumbnail in System Settings: same code, tiny screen
+   (hence the `scale` factor computed in `draw`).
+2. **`animateOneFrame()`**: called by a system timer at the rate chosen with
+   `animationTimeInterval` (here 8 times per second). This is the "game loop":
+   update the *state* (sample the CPU, add a log line), then ask for a repaint
+   with `needsDisplay = true`.
+3. **`draw(_:)`**: called by AppKit when the view must repaint. *Draw* the
+   state there, nothing else: separating state from rendering is the rule of
+   the framework, because `draw` can be invoked at any time.
 
-Deux pièges AppKit à connaître en lisant `draw` : le dessin est en **mode
-immédiat** (`setFill()` puis `fill()` agissent sur un contexte graphique
-implicite, très proche de GDI+), et le repère a son **origine en bas à
-gauche, Y vers le haut** — l'inverse de VB.NET et du HTML.
+Two AppKit traps to know when reading `draw`: drawing is in **immediate mode**
+(`setFill()` then `fill()` act on an implicit graphics context, very close to
+GDI+), and the coordinate system has its **origin at the bottom left, Y going
+up**, the opposite of VB.NET and HTML.
 
-### Les vraies stats : parler au noyau via Mach
+### Real stats: talking to the kernel through Mach
 
-Les barres CPU et la jauge RAM ne sont pas décoratives. La méthode
-`sampleCPU()` ([Sources/OmSaverView.swift:129](Sources/OmSaverView.swift))
-appelle deux API C du noyau — l'équivalent macOS de lire `/proc/stat` et
-`/proc/meminfo` sous Linux :
+The CPU bars and the RAM gauge are not decorative. The `sampleCPU()` method
+([Sources/OmSaverView.swift:129](Sources/OmSaverView.swift)) calls two kernel
+C APIs, the macOS equivalent of reading `/proc/stat` and `/proc/meminfo` on
+Linux:
 
-- **`host_processor_info`** renvoie, par cœur, des compteurs de ticks
-  *cumulés depuis le boot* ; la charge instantanée se calcule par différence
-  entre deux échantillons. Le buffer est alloué par le noyau et doit être
-  rendu à la main (`vm_deallocate`) — ARC, le ramasse-miettes de Swift, ne
-  gère pas cette mémoire-là. Les opérateurs `&+`/`&-` font de l'arithmétique
-  modulo comme en C, car ces compteurs 32 bits débordent et Swift, lui,
-  plante sur un dépassement d'entier ordinaire.
-- **`host_statistics64`** remplit une struct de compteurs de pages mémoire ;
-  la formule *actives + wired + compressées* est celle du Moniteur d'activité.
+- **`host_processor_info`** returns, per core, tick counters *accumulated
+  since boot*; the instantaneous load is the difference between two samples.
+  The buffer is allocated by the kernel and must be returned by hand
+  (`vm_deallocate`): ARC, Swift's memory management, knows nothing about it.
+  The `&+`/`&-` operators do modulo arithmetic as in C, because these 32-bit
+  counters wrap around and Swift crashes on an ordinary integer overflow.
+- **`host_statistics64`** fills a struct of memory page counters; the
+  *active + wired + compressed* formula is the one Activity Monitor uses.
 
-### Le build sans Xcode
+### Building without Xcode
 
-`build.sh` remplace tout un projet Xcode par 90 lignes de shell : deux
-compilations (`swiftc -emit-object` pour arm64 et x86_64, car `-parse-as-library`
-dit au compilateur qu'il n'y a pas de `main`), un linkage `clang -bundle` qui
-produit le Mach-O chargeable, un `lipo` qui fusionne les deux architectures en
-**binaire universel**, la génération de l'`Info.plist`, puis une **signature**
-`codesign` — un certificat de développeur si le trousseau en a un, sinon une
-signature *ad hoc* (`--sign -`), suffisante pour sa propre machine.
-L'installation, elle, est une simple copie : les économiseurs de l'utilisateur
-vivent dans `~/Library/Screen Savers/`.
+`build.sh` replaces a whole Xcode project with 90 lines of shell: two
+compilations (`swiftc -emit-object` for arm64 and x86_64, with
+`-parse-as-library` telling the compiler there is no `main`), a
+`clang -bundle` link that produces the loadable Mach-O, a `lipo` that merges
+both architectures into a **universal binary**, the generation of the
+`Info.plist`, then a `codesign` **signature**: a developer certificate if the
+keychain has one, otherwise an *ad hoc* signature (`--sign -`), enough for
+your own machine. Installing is a plain copy: the user's screensavers live in
+`~/Library/Screen Savers/`.
 
-## Pourquoi c'est gratuit ?
+## Why is it free?
 
-Parce qu'un économiseur d'écran est un panneau publicitaire 😄 — OmSaver est
-la moitié gratuite de l'**OmSuite**, une série de petits utilitaires payants
-dans le même esprit :
+Because a screensaver is a billboard 😄. OmSaver is the free half of the
+**OmSuite**, a series of small paid utilities in the same spirit:
 
 | | | |
 |---|---|---|
-| **OmFi** | panneau Wi-Fi au clavier — scan, connexion, partage QR, bascule DNS, graphes | [omfi.stranix.net](https://omfi.stranix.net) |
-| **OmDash** | les signes vitaux du système d'un coup d'œil | *bientôt* |
-| **OmWin** | les raccourcis Omarchy pour vos fenêtres | *bientôt* |
+| **OmFi** | keyboard Wi-Fi panel: scan, join, QR share, DNS switch, graphs | [omfi.stranix.net](https://omfi.stranix.net) |
+| **OmDash** | your system's vital signs at a glance | *soon* |
+| **OmWin** | the Omarchy shortcuts for your windows | *soon* |
 
-Du même établi : [ZapZap](https://zapzap.stranix.net) (WhatsApp à un raccourci
-près) et [Sygnet](https://sygnet.app) (synchro de favoris qui inclut vraiment
-Safari). Tout est sur [apps.stranix.net](https://apps.stranix.net).
+From the same workbench: [ZapZap](https://zapzap.stranix.net) (WhatsApp one
+keystroke away) and [Sygnet](https://sygnet.app) (bookmark sync that really
+includes Safari). Everything is on [apps.stranix.net](https://apps.stranix.net).
 
-## Vie privée
+## Privacy
 
-OmSaver lit vos statistiques CPU/mémoire localement et les affiche. C'est
-tout. Aucune requête réseau, aucune télémétrie, aucun fichier écrit. Les
-« scans réseau » du journal sont de la pure fiction théâtrale.
+OmSaver reads your CPU/memory statistics locally and displays them. That is
+all. No network request, no telemetry, no file written. The "network scans" in
+the log are pure theatre.
 
-## Du même auteur
+## By the same author
 
-- [stranix.net](https://stranix.net) : le blog.
-- [Deckhand](https://deckhand.show) : des présentations HTML écrites en Markdown.
-- [Chutag](https://chutag.stranix.net) : des tags QR pour retrouver ses objets perdus (bêta).
-- [apps.stranix.net](https://apps.stranix.net) : toutes les apps macOS, OmSuite comprise.
-- [CODE79](https://code79.com) : l'atelier devops derrière tout ça.
+- [stranix.net](https://stranix.net): the blog.
+- [Deckhand](https://deckhand.show): HTML presentations written in Markdown.
+- [Chutag](https://chutag.be): QR tags to get your lost items back (beta).
+- [apps.stranix.net](https://apps.stranix.net): all the macOS apps, OmSuite included.
+- [CODE79](https://code79.com): the devops workshop behind all this.
 
-## Licence
+## License
 
-MIT © 2026 [Stranix](https://apps.stranix.net) — Gilles Fauvie.
-Fabriqué en Belgique, une invocation de `swiftc` à la fois.
+MIT © 2026 [Stranix](https://apps.stranix.net), Gilles Fauvie.
+Made in Belgium, one `swiftc` invocation at a time.
 
 ## Support
 
