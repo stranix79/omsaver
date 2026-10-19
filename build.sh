@@ -19,7 +19,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION=1.0
+VERSION=1.1
 BUILD=build
 SAVER="$BUILD/OmSaver.saver"
 mkdir -p "$BUILD/obj"

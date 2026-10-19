@@ -175,6 +175,27 @@ the log are pure theatre.
 MIT © 2026 [Stranix](https://apps.stranix.net), Gilles Fauvie.
 Made in Belgium, one `swiftc` invocation at a time.
 
+## Changelog
+
+### 1.1 (2026-10-20) - it now stops for real
+- **Fixed: CPU burnt after the screensaver ended.** Since macOS 14 the host
+  process (`legacyScreenSaver`) is not reliably killed when the saver stops,
+  and it does not always call `stopAnimation()`. OmSaver 1.0 then kept
+  sampling the CPU and repainting an invisible window four to eight times a
+  second, for hours (6 % CPU measured on the author's Mac, screen unlocked).
+  1.1 stops on the system's own "saver did stop / screen unlocked" broadcasts,
+  stops itself after two seconds without a visible window, and ends the host
+  process once no view of the plugin is animating any more (never in the
+  System Settings preview).
+- Animation rate 8 Hz -> 4 Hz: nothing on screen moves smoothly, the clock
+  only needs seconds and the cursor blinks at 2 Hz.
+- Formatters, host name and version string are built once instead of at every
+  frame (`Host.current()` alone was a few milliseconds, eight times a second).
+- The boot line no longer hard-codes the version.
+
+### 1.0 (2026-09-02)
+- First release.
+
 ## Support
 
 OmSaver is open source. If it lives on your Mac, you can [sponsor on GitHub](https://github.com/sponsors/stranix79) or [buy me a Red Bull](https://ko-fi.com/stranix). Other ways: [stranix.net/soutenir](https://stranix.net/soutenir/).

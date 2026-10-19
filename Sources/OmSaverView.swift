@@ -14,9 +14,12 @@
 //  The life cycle, imposed by the parent class ScreenSaverView:
 //    1. init(frame:isPreview:)  - called once when the plugin is loaded
 //    2. animateOneFrame()       - called by a system timer at the rate of
-//                                 animationTimeInterval (here 8 times/s);
+//                                 animationTimeInterval (here 4 times/s);
 //                                 this is where the STATE is updated
 //                                 (stats, log)
+//    2b. startAnimation() / stopAnimation() - the host tells us when to run
+//                                 and when to stop; since macOS 14 the stop
+//                                 is not reliable, see "stopping for real"
 //    3. draw(_:)                - called when the view must repaint; this is
 //                                 where the state is DRAWN, nothing else
 //  Keeping 2 and 3 apart is the AppKit rule: draw() can be called at any
@@ -60,8 +63,35 @@ public final class OmSaverView: ScreenSaverView {
     private var cpuLoads: [Double] = []              // load 0...1 per core, ready to draw
     private var ramUsed: Double = 0                  // fraction 0...1 of RAM in use
 
+    // -- life cycle bookkeeping (see "stopping for real" below) --
+    private var running = false                    // between startAnimation and stopAnimation
+    private var startedAt: TimeInterval = 0          // when the current animation started
+    private var invisibleTicks = 0                   // consecutive ticks with no visible window
+    private var observers: [NSObjectProtocol] = []   // notification tokens, removed on stop
+    // How many views of this plugin are running in THIS process. With two
+    // screens legacyScreenSaver creates two views; the host may only exit
+    // once the last one has stopped.
+    private static var activeViews = 0
+
+    // -- objects that are expensive to create and were rebuilt at every frame
+    //    in 1.0 (two DateFormatters, Host.current(), the bundle's Info.plist).
+    //    Built once, reused: the saver now costs a fraction of what it did.
+    private let timeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+    private let dateFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEEE d MMMM yyyy"
+        f.locale = Locale(identifier: "en_US"); return f
+    }()
+    // `lazy`: computed the first time it is read, then cached. Host.current()
+    // can take milliseconds (it asks the system configuration for the name),
+    // which is fine once and absurd 8 times per second.
+    private lazy var hostName: String = Host.current().localizedName ?? "mac"
+    private lazy var version: String =
+        Bundle(for: OmSaverView.self).infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+
     private let bootMsgs = [
-        ("om› saver 1.0 — TUI screensaver, Omarchy vibes", 0),
+        ("om› saver — TUI screensaver, Omarchy vibes", 0),
         ("initializing panes…", 1), ("HERDING PACKETS", 1),
     ]
     private let funnies = [
@@ -104,9 +134,11 @@ public final class OmSaverView: ScreenSaverView {
     public override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
         // Rate of the system timer that will call animateOneFrame().
-        // 8 Hz is plenty for a clock and some bars; no need to burn CPU at
-        // 60 fps on a screen that is supposed to save energy.
-        animationTimeInterval = 1.0 / 8.0
+        // 4 Hz is plenty for a clock with seconds, a blinking cursor and some
+        // bars; nothing here moves smoothly. 1.0 ran at 8 Hz, which doubled
+        // the CPU for no visible gain on a screen that is supposed to save
+        // energy.
+        animationTimeInterval = 1.0 / 4.0
         for (m, kind) in bootMsgs {
             logLines.append((stamp(m), kind == 0 ? cAccent : cDim))
         }
@@ -118,8 +150,125 @@ public final class OmSaverView: ScreenSaverView {
 
     // Prefixes a log line with the current time, syslog style.
     private func stamp(_ s: String) -> String {
-        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
-        return "[\(f.string(from: Date()))] \(s)"
+        "[\(timeFormatter.string(from: Date()))] \(s)"
+    }
+
+    // MARK: stopping for real
+    //
+    // The bug this section fixes (found on the author's own Mac, 20/10/2026):
+    // legacyScreenSaver kept running for hours after the screensaver had
+    // ended, at 6 % CPU, screen unlocked, user working. Since macOS 14 the
+    // system no longer kills that host process reliably when the saver stops,
+    // and when it forgets to call stopAnimation() the parent class's timer
+    // keeps calling animateOneFrame() and draw() on a window nobody sees.
+    // A screensaver that burns CPU while you work is the opposite of its job,
+    // so we stop on every signal we can get, and we belt-and-braces it:
+    //   1. the normal path: stopAnimation() called by the host;
+    //   2. the system tells everyone the saver stopped or the screen was
+    //      unlocked (distributed notifications), we stop ourselves;
+    //   3. a watchdog in animateOneFrame(): two seconds without a visible
+    //      window and we stop ourselves;
+    //   4. once no view of this plugin animates any more, the host process
+    //      exits (never in the System Settings preview). macOS starts a
+    //      fresh legacyScreenSaver next time, that is how Apple's own savers
+    //      end up behaving too, just not reliably.
+
+    public override func startAnimation() {
+        super.startAnimation()
+        running = true
+        startedAt = Date().timeIntervalSince1970
+        invisibleTicks = 0
+        Self.activeViews += 1
+        installStopObservers()
+    }
+
+    public override func stopAnimation() {
+        if running {
+            running = false
+            Self.activeViews = max(0, Self.activeViews - 1)
+        }
+        removeStopObservers()
+        super.stopAnimation()   // stops the parent's timer: no more animateOneFrame()
+        scheduleHostExitIfIdle()
+    }
+
+    // The view is being taken out of its window (the host is tearing the
+    // screensaver down): same as a stop.
+    public override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil, running { stopAnimation() }
+    }
+
+    deinit { removeStopObservers() }
+
+    // Names the system broadcasts when a screensaver ends or a session wakes
+    // up. They reach every process, which is exactly what a plugin with no
+    // main() needs.
+    private static let stopSignals = [
+        "com.apple.screensaver.didstop",
+        "com.apple.screenIsUnlocked",
+        "com.apple.sessionDidBecomeActive",
+    ]
+
+    private func installStopObservers() {
+        guard observers.isEmpty else { return }
+        let dnc = DistributedNotificationCenter.default()
+        for name in Self.stopSignals {
+            observers.append(dnc.addObserver(forName: Notification.Name(name), object: nil,
+                                             queue: .main) { [weak self] _ in self?.hostSaysStop() })
+        }
+        let wnc = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.sessionDidBecomeActiveNotification,
+                     NSWorkspace.screensDidWakeNotification] {
+            observers.append(wnc.addObserver(forName: name, object: nil,
+                                             queue: .main) { [weak self] _ in self?.hostSaysStop() })
+        }
+    }
+
+    private func removeStopObservers() {
+        let dnc = DistributedNotificationCenter.default()
+        let wnc = NSWorkspace.shared.notificationCenter
+        for token in observers { dnc.removeObserver(token); wnc.removeObserver(token) }
+        observers.removeAll()
+    }
+
+    private func hostSaysStop() {
+        // The preview in System Settings is not the running screensaver: a
+        // stop broadcast must not freeze the thumbnail.
+        guard !isPreview, running else { return }
+        stopAnimation()
+    }
+
+    // Called from animateOneFrame(). Returns false when the view decided to
+    // stop (the caller must then do nothing else).
+    private func stillWorthAnimating() -> Bool {
+        guard !isPreview, running else { return running }
+        // grace period: the window can take a moment to show up at start
+        if Date().timeIntervalSince1970 - startedAt < 2 { return true }
+        let win = window
+        let visible = (win?.isVisible ?? false)
+            && (win?.occlusionState.contains(.visible) ?? false)
+            && !isHiddenOrHasHiddenAncestor
+        if visible { invisibleTicks = 0; return true }
+        invisibleTicks += 1
+        if invisibleTicks >= 8 {   // 2 s at 4 Hz
+            stopAnimation()
+            return false
+        }
+        return true
+    }
+
+    // Last line of defence: when every view of this plugin has stopped and
+    // we are the real screensaver (not the Settings preview), end the host
+    // process. One second of delay, re-checked, so a stop/start pair during a
+    // screen change does not kill a saver that just restarted.
+    private func scheduleHostExitIfIdle() {
+        guard !isPreview, Self.activeViews == 0 else { return }
+        let host = ProcessInfo.processInfo.processName.lowercased()
+        guard host.contains("screensaver") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if Self.activeViews == 0 { exit(0) }
+        }
     }
 
     // MARK: real system stats
@@ -196,11 +345,12 @@ public final class OmSaverView: ScreenSaverView {
 
     // MARK: animation
 
-    // Called about 8 times/s by the ScreenSaverView timer. This is the
-    // saver's "game loop": update the state, then needsDisplay = true asks
-    // the system to call draw() again on the next display cycle.
+    // Called 4 times/s by the ScreenSaverView timer. This is the saver's
+    // "game loop": update the state, then needsDisplay = true asks the
+    // system to call draw() again on the next display cycle.
     // We NEVER draw directly here.
     public override func animateOneFrame() {
+        guard stillWorthAnimating() else { return }
         sampleCPU()
         let avg = cpuLoads.isEmpty ? 0 : cpuLoads.reduce(0, +) / Double(cpuLoads.count)
         spark.append(avg)
@@ -276,15 +426,13 @@ public final class OmSaverView: ScreenSaverView {
         // -- clock pane (reminder: y=H*0.52 is measured from the BOTTOM of the screen)
         let clockR = NSRect(x: gap, y: H * 0.52, width: leftW - 1.5 * gap, height: H * 0.48 - 1.5 * gap)
         pane(clockR, title: "om› clock", scale: scale)
-        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
-        let timeStr = f.string(from: Date())
+        let now = Date()
+        let timeStr = timeFormatter.string(from: now)
         let bigF = mono(min(clockR.width / 5.2, clockR.height * 0.42), .bold)
         let ts = tw(timeStr, bigF)
         text(timeStr, NSPoint(x: clockR.midX - ts / 2, y: clockR.midY - bigF.pointSize * 0.45),
              bigF, cText)
-        f.dateFormat = "EEEE d MMMM yyyy"
-        f.locale = Locale(identifier: "en_US")
-        let dateStr = f.string(from: Date()).lowercased()
+        let dateStr = dateFormatter.string(from: now).lowercased()
         let up = ProcessInfo.processInfo.systemUptime
         let sub = "\(dateStr)   ·   up \(Int(up) / 86400)d \(Int(up) % 86400 / 3600)h \(Int(up) % 3600 / 60)m"
         let subF = mono(15 * scale)
@@ -379,17 +527,15 @@ public final class OmSaverView: ScreenSaverView {
             cAccent.setStroke(); path.lineWidth = max(1, 1.2 * scale); path.stroke()
         }
 
-        // host name at the bottom of the system pane
-        let host = Host.current().localizedName ?? "mac"
+        // host name at the bottom of the system pane (cached, see hostName)
         let hostF = mono(12 * scale)
-        text("host \(host)", NSPoint(x: inX, y: sysR.minY + 18 * scale), hostF, cDim)
+        text("host \(hostName)", NSPoint(x: inX, y: sysR.minY + 18 * scale), hostF, cDim)
 
         // -- rotating ad footer (changes every ~12 s)
-        // Bundle(for:) finds the .saver bundle that contains THIS class
-        // (not Bundle.main, which would be legacyScreenSaver!) and reads the
-        // version from its Info.plist, written by build.sh, single source.
-        let appV = Bundle(for: OmSaverView.self).infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let foot = promos[Int(Date().timeIntervalSince1970 / 12) % promos.count] + "  ·  om› saver v" + appV
+        // `version` comes from Bundle(for:), the .saver bundle that contains
+        // THIS class (not Bundle.main, which would be legacyScreenSaver!),
+        // read once from its Info.plist, written by build.sh, single source.
+        let foot = promos[Int(now.timeIntervalSince1970 / 12) % promos.count] + "  ·  om› saver v" + version
         let footF = mono(12 * scale)
         text(foot, NSPoint(x: W / 2 - tw(foot, footF) / 2, y: 6 * scale), footF,
              cDim.withAlphaComponent(0.85))
